@@ -24,7 +24,7 @@ class EnvoyContainer extends GenericContainer<EnvoyContainer> {
   EnvoyContainer(String config, Supplier<Integer> controlPlanePortSupplier) {
     // this version is changed automatically by /tools/update-sha.sh:57
     // if you change it make sure to reflect changes there
-    super("envoyproxy/envoy-dev:c919bdec19d79e97f4f56e4095706f8e6a383f1c");
+    super("envoyproxy/envoy:v1.32.3");
     this.config = config;
     this.controlPlanePortSupplier = controlPlanePortSupplier;
   }
@@ -45,7 +45,7 @@ class EnvoyContainer extends GenericContainer<EnvoyContainer> {
         "-l", "debug"
     );
 
-    getExposedPorts().add(0, ADMIN_PORT);
+    addExposedPort(ADMIN_PORT);
   }
 
   @Override

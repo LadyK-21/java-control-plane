@@ -4,9 +4,11 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.envoyproxy.controlplane.cache.NodeGroup;
 import io.envoyproxy.controlplane.cache.SnapshotCache;
-import io.envoyproxy.controlplane.cache.v2.Snapshot;
+import io.envoyproxy.controlplane.cache.v3.Snapshot;
 import io.envoyproxy.controlplane.server.DiscoveryServerCallbacks;
-import io.envoyproxy.envoy.api.v2.DiscoveryRequest;
+import io.envoyproxy.envoy.service.discovery.v3.DeltaDiscoveryRequest;
+import io.envoyproxy.envoy.service.discovery.v3.DiscoveryRequest;
+
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -42,11 +44,6 @@ import java.util.function.Consumer;
  */
 public class SnapshotCollectingCallback<T, X extends io.envoyproxy.controlplane.cache.Snapshot>
     implements DiscoveryServerCallbacks {
-  private static class SnapshotState {
-    int streamCount;
-    Instant lastSeen;
-  }
-
   private final SnapshotCache<T, X> snapshotCache;
   private final NodeGroup<T> nodeGroup;
   private final Clock clock;
@@ -58,16 +55,16 @@ public class SnapshotCollectingCallback<T, X extends io.envoyproxy.controlplane.
   /**
    * Creates the callback.
    *
-   * @param snapshotCache the cache to evict snapshots from
-   * @param nodeGroup the node group used to map requests to groups
-   * @param clock system clock
-   * @param collectorCallbacks the callbacks to invoke when snapshot is collected
-   * @param collectAfterMillis how long a snapshot must be referenced for before being collected
+   * @param snapshotCache            the cache to evict snapshots from
+   * @param nodeGroup                the node group used to map requests to groups
+   * @param clock                    system clock
+   * @param collectorCallbacks       the callbacks to invoke when snapshot is collected
+   * @param collectAfterMillis       how long a snapshot must be referenced for before being collected
    * @param collectionIntervalMillis how often the collection background action should run
    */
   public SnapshotCollectingCallback(SnapshotCache<T, X> snapshotCache,
-      NodeGroup<T> nodeGroup, Clock clock, Set<Consumer<T>> collectorCallbacks,
-      long collectAfterMillis, long collectionIntervalMillis) {
+                                    NodeGroup<T> nodeGroup, Clock clock, Set<Consumer<T>> collectorCallbacks,
+                                    long collectAfterMillis, long collectionIntervalMillis) {
     this.snapshotCache = snapshotCache;
     this.nodeGroup = nodeGroup;
     this.clock = clock;
@@ -79,15 +76,14 @@ public class SnapshotCollectingCallback<T, X extends io.envoyproxy.controlplane.
         collectionIntervalMillis, TimeUnit.MILLISECONDS);
   }
 
-  @Override
-  public synchronized void onV2StreamRequest(long streamId, DiscoveryRequest request) {
+  public synchronized void onV3StreamRequest(long streamId, DiscoveryRequest request) {
     T groupIdentifier = nodeGroup.hash(request.getNode());
     updateState(streamId, groupIdentifier);
   }
 
   @Override
-  public synchronized void onV3StreamRequest(long streamId,
-      io.envoyproxy.envoy.service.discovery.v3.DiscoveryRequest request) {
+  public void onV3StreamDeltaRequest(long streamId,
+                                     DeltaDiscoveryRequest request) {
     T groupIdentifier = nodeGroup.hash(request.getNode());
     updateState(streamId, groupIdentifier);
   }
@@ -102,11 +98,13 @@ public class SnapshotCollectingCallback<T, X extends io.envoyproxy.controlplane.
     }
   }
 
-  @Override public void onStreamClose(long streamId, String typeUrl) {
+  @Override
+  public void onStreamClose(long streamId, String typeUrl) {
     onStreamCloseHelper(streamId);
   }
 
-  @Override public void onStreamCloseWithError(long streamId, String typeUrl, Throwable error) {
+  @Override
+  public void onStreamCloseWithError(long streamId, String typeUrl, Throwable error) {
     onStreamCloseHelper(streamId);
   }
 
@@ -144,5 +142,10 @@ public class SnapshotCollectingCallback<T, X extends io.envoyproxy.controlplane.
     SnapshotState snapshotState = snapshotStates.get(removed);
     snapshotState.streamCount--;
     snapshotState.lastSeen = clock.instant();
+  }
+
+  private static class SnapshotState {
+    int streamCount;
+    Instant lastSeen;
   }
 }

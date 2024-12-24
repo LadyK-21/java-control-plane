@@ -30,19 +30,19 @@ public abstract class DiscoveryRequestStreamObserver<T, U> implements StreamObse
   private static final Logger LOGGER = LoggerFactory.getLogger(DiscoveryServer.class);
 
   final long streamId;
-  volatile boolean hasClusterChanged;
+  final DiscoveryServer<T, U, ?, ?, ?> discoveryServer;
   private final String defaultTypeUrl;
   private final StreamObserver<U> responseObserver;
   private final Executor executor;
-  private final DiscoveryServer<T, U> discoveryServer;
+  volatile boolean hasClusterChanged;
   private volatile long streamNonce;
   private volatile boolean isClosing;
 
   DiscoveryRequestStreamObserver(String defaultTypeUrl,
-      StreamObserver<U> responseObserver,
-      long streamId,
-      Executor executor,
-      DiscoveryServer<T, U> discoveryServer) {
+                                 StreamObserver<U> responseObserver,
+                                 long streamId,
+                                 Executor executor,
+                                 DiscoveryServer<T, U, ?, ?, ?> discoveryServer) {
     this.defaultTypeUrl = defaultTypeUrl;
     this.responseObserver = responseObserver;
     this.streamId = streamId;
@@ -70,7 +70,7 @@ public abstract class DiscoveryRequestStreamObserver<T, U> implements StreamObse
     try {
       discoveryServer.runStreamRequestCallbacks(streamId, rawRequest);
     } catch (RequestException e) {
-      closeWithError(e);
+      onError(e);
       return;
     }
 
@@ -87,7 +87,8 @@ public abstract class DiscoveryRequestStreamObserver<T, U> implements StreamObse
           request,
           ackedResources(requestTypeUrl),
           r -> executor.execute(() -> send(r, requestTypeUrl)),
-          hasClusterChanged
+          hasClusterChanged,
+          discoveryServer.startupConfigs().allowDefaultEmptyEdsUpdate()
       ));
     }
   }

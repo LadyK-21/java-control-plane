@@ -1,5 +1,6 @@
 # java-control-plane
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/envoyproxy/java-control-plane/badge)](https://securityscorecards.dev/viewer/?uri=github.com/envoyproxy/java-control-plane)
 [![CircleCI](https://circleci.com/gh/envoyproxy/java-control-plane.svg?style=svg)](https://circleci.com/gh/envoyproxy/java-control-plane) [![codecov](https://codecov.io/gh/envoyproxy/java-control-plane/branch/main/graph/badge.svg)](https://codecov.io/gh/envoyproxy/java-control-plane) [![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.envoyproxy.controlplane/java-control-plane/badge.svg)](https://maven-badges.herokuapp.com/maven-central/io.envoyproxy.controlplane/java-control-plane)
 
 This repository contains a Java-based implementation of an API server that implements the discovery service APIs defined
@@ -7,11 +8,11 @@ in [data-plane-api](https://github.com/envoyproxy/data-plane-api). It started li
 [go-control-plane](https://github.com/envoyproxy/go-control-plane), but building an idiomatic Java implementation is
 prioritized over exact interface parity with the Go implementation.
 
-Both v2 and v3 resources as well as transport versions are supported. Migrating
-to v3 is recommended as Envoy will drop v2 support at EOY 2020 (see
+Only v3 resources as well as transport versions are now supported. Migrating
+to v3 is necessary as Envoy dropped v2 support at EOY 2020 (see
 [API_VERSIONING.md](https://github.com/envoyproxy/envoy/blob/4c6206865061591155d18b55972b4d626e1703dd/api/API_VERSIONING.md))
 
-See the (v2-to-v3 migration guide)[V2_TO_V3_GUIDE.md] for an exmplanation of migration paths.
+See the [v2-to-v3 migration guide](https://github.com/envoyproxy/java-control-plane/blob/main/V2_TO_V3_GUIDE.md) for an explanation of migration paths.
 
 ### Requirements
 
