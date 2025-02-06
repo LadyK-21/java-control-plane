@@ -1,10 +1,12 @@
 package io.envoyproxy.controlplane.server;
 
+import io.envoyproxy.controlplane.server.exception.RequestException;
+import io.envoyproxy.envoy.service.discovery.v3.DeltaDiscoveryRequest;
 import io.envoyproxy.envoy.service.discovery.v3.DiscoveryRequest;
 import io.envoyproxy.envoy.service.discovery.v3.DiscoveryResponse;
 import java.util.concurrent.CountDownLatch;
 
-public class V3OnlyDiscoveryServerCallbacks implements DiscoveryServerCallbacks  {
+public class V3OnlyDiscoveryServerCallbacks implements DiscoveryServerCallbacks {
   private final CountDownLatch onStreamOpenLatch;
   private final CountDownLatch onStreamRequestLatch;
   private final CountDownLatch onStreamResponseLatch;
@@ -25,26 +27,19 @@ public class V3OnlyDiscoveryServerCallbacks implements DiscoveryServerCallbacks 
   }
 
   @Override
-  public void onStreamOpen(long streamId, String typeUrl) {
+  public void onStreamOpen(long streamId, String typeUrl) throws RequestException {
     onStreamOpenLatch.countDown();
   }
 
   @Override
-  public void onV2StreamRequest(long streamId,
-      io.envoyproxy.envoy.api.v2.DiscoveryRequest request) {
-    throw new IllegalStateException("Unexpected v2 request in v3 test");
-  }
-
-  @Override
-  public void onV3StreamRequest(long streamId, DiscoveryRequest request) {
+  public void onV3StreamRequest(long streamId, DiscoveryRequest request) throws RequestException {
     onStreamRequestLatch.countDown();
   }
 
   @Override
-  public void onStreamResponse(long streamId,
-      io.envoyproxy.envoy.api.v2.DiscoveryRequest request,
-      io.envoyproxy.envoy.api.v2.DiscoveryResponse response) {
-    throw new IllegalStateException("Unexpected v2 response in v3 test");
+  public void onV3StreamDeltaRequest(long streamId,
+                                     DeltaDiscoveryRequest request) throws RequestException {
+    throw new IllegalStateException("Unexpected delta request");
   }
 
   @Override

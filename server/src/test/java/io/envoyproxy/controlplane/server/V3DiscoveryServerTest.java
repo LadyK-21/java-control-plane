@@ -12,6 +12,9 @@ import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Table;
 import com.google.protobuf.Message;
 import io.envoyproxy.controlplane.cache.ConfigWatcher;
+import io.envoyproxy.controlplane.cache.DeltaResponse;
+import io.envoyproxy.controlplane.cache.DeltaWatch;
+import io.envoyproxy.controlplane.cache.DeltaXdsRequest;
 import io.envoyproxy.controlplane.cache.Resources;
 import io.envoyproxy.controlplane.cache.Response;
 import io.envoyproxy.controlplane.cache.TestResources;
@@ -29,6 +32,7 @@ import io.envoyproxy.envoy.service.cluster.v3.ClusterDiscoveryServiceGrpc;
 import io.envoyproxy.envoy.service.cluster.v3.ClusterDiscoveryServiceGrpc.ClusterDiscoveryServiceStub;
 import io.envoyproxy.envoy.service.discovery.v3.AggregatedDiscoveryServiceGrpc;
 import io.envoyproxy.envoy.service.discovery.v3.AggregatedDiscoveryServiceGrpc.AggregatedDiscoveryServiceStub;
+import io.envoyproxy.envoy.service.discovery.v3.DeltaDiscoveryRequest;
 import io.envoyproxy.envoy.service.discovery.v3.DiscoveryRequest;
 import io.envoyproxy.envoy.service.discovery.v3.DiscoveryResponse;
 import io.envoyproxy.envoy.service.endpoint.v3.EndpointDiscoveryServiceGrpc;
@@ -82,15 +86,15 @@ public class V3DiscoveryServerTest {
 
   private static final String VERSION = Integer.toString(ThreadLocalRandom.current().nextInt(1, 1000));
 
-  private static final Cluster CLUSTER = TestResources.createClusterV3(CLUSTER_NAME);
+  private static final Cluster CLUSTER = TestResources.createCluster(CLUSTER_NAME);
   private static final ClusterLoadAssignment
-      ENDPOINT = TestResources.createEndpointV3(CLUSTER_NAME, ENDPOINT_PORT);
+      ENDPOINT = TestResources.createEndpoint(CLUSTER_NAME, ENDPOINT_PORT);
   private static final Listener
-      LISTENER = TestResources.createListenerV3(ADS, V3, V3, LISTENER_NAME, LISTENER_PORT,
+      LISTENER = TestResources.createListener(ADS, false, V3, V3, LISTENER_NAME, LISTENER_PORT,
       ROUTE_NAME);
-  private static final RouteConfiguration ROUTE = TestResources.createRouteV3(ROUTE_NAME,
+  private static final RouteConfiguration ROUTE = TestResources.createRoute(ROUTE_NAME,
       CLUSTER_NAME);
-  private static final Secret SECRET = TestResources.createSecretV3(SECRET_NAME);
+  private static final Secret SECRET = TestResources.createSecret(SECRET_NAME);
 
   @Rule
   public final GrpcServerRule grpcServer = new GrpcServerRule().directExecutor();
@@ -441,7 +445,7 @@ public class V3DiscoveryServerTest {
       }
 
       @Override
-      public void onStreamOpen(long streamId, String typeUrl) {
+      public void onStreamOpen(long streamId, String typeUrl) throws RequestException {
         super.onStreamOpen(streamId, typeUrl);
 
         if (!typeUrl.equals(DiscoveryServer.ANY_TYPE_URL)) {
@@ -455,7 +459,8 @@ public class V3DiscoveryServerTest {
       }
 
       @Override
-      public void onV3StreamRequest(long streamId, DiscoveryRequest request) {
+      public void onV3StreamRequest(long streamId, DiscoveryRequest request)
+          throws RequestException {
         super.onV3StreamRequest(streamId, request);
         streamRequestLatch.get().countDown();
       }
@@ -616,7 +621,7 @@ public class V3DiscoveryServerTest {
       }
 
       @Override
-      public void onStreamOpen(long streamId, String typeUrl) {
+      public void onStreamOpen(long streamId, String typeUrl) throws RequestException {
         super.onStreamOpen(streamId, typeUrl);
 
         if (!Resources.V3.TYPE_URLS.contains(typeUrl)) {
@@ -630,7 +635,8 @@ public class V3DiscoveryServerTest {
       }
 
       @Override
-      public void onV3StreamRequest(long streamId, DiscoveryRequest request) {
+      public void onV3StreamRequest(long streamId, DiscoveryRequest request)
+          throws RequestException {
         super.onV3StreamRequest(streamId, request);
 
         streamRequestLatches.get(request.getTypeUrl()).countDown();
@@ -830,9 +836,10 @@ public class V3DiscoveryServerTest {
     MockConfigWatcher configWatcher = new MockConfigWatcher(false, createResponses()) {
       @Override
       public Watch createWatch(boolean ads, XdsRequest request, Set<String> knownResources,
-                               Consumer<Response> responseConsumer, boolean hasClusterChanged) {
+                               Consumer<Response> responseConsumer, boolean hasClusterChanged,
+                               boolean allowDefaultEmptyEdsUpdate) {
         watchCreated.countDown();
-        watch.set(super.createWatch(ads, request, knownResources, responseConsumer, false));
+        watch.set(super.createWatch(ads, request, knownResources, responseConsumer, false, false));
         return watch.get();
       }
     };
@@ -876,7 +883,7 @@ public class V3DiscoveryServerTest {
   public void testCallbacksRequestException() throws InterruptedException {
     MockDiscoveryServerCallbacks callbacks = new MockDiscoveryServerCallbacks() {
       @Override
-      public void onV3StreamRequest(long streamId, DiscoveryRequest request) {
+      public void onV3StreamRequest(long streamId, DiscoveryRequest request) throws RequestException {
         super.onV3StreamRequest(streamId, request);
         throw new RequestException(Status.INVALID_ARGUMENT.withDescription("request not valid"));
       }
@@ -908,9 +915,51 @@ public class V3DiscoveryServerTest {
     });
 
     assertThat(callbacks.streamCloseCount).hasValue(0);
-    assertThat(callbacks.streamCloseWithErrorCount).hasValue(0);
+    assertThat(callbacks.streamCloseWithErrorCount).hasValue(1);
     assertThat(callbacks.streamOpenCount).hasValue(1);
     assertThat(callbacks.streamRequestCount).hasValue(1);
+    assertThat(callbacks.streamResponseCount).hasValue(0);
+  }
+
+  @Test
+  public void testCallbacksOpenException() throws InterruptedException {
+    MockDiscoveryServerCallbacks callbacks = new MockDiscoveryServerCallbacks() {
+      @Override
+      public void onStreamOpen(long streamId, String typeUrl) throws RequestException {
+        super.onStreamOpen(streamId, typeUrl);
+        throw new RequestException(Status.INVALID_ARGUMENT.withDescription("request not valid"));
+      }
+    };
+
+    MockConfigWatcher configWatcher = new MockConfigWatcher(false, createResponses());
+    V3DiscoveryServer server = new V3DiscoveryServer(callbacks, configWatcher);
+
+    grpcServer.getServiceRegistry().addService(server.getAggregatedDiscoveryServiceImpl());
+    AggregatedDiscoveryServiceStub stub = AggregatedDiscoveryServiceGrpc.newStub(grpcServer.getChannel());
+
+    MockDiscoveryResponseObserver responseObserver = new MockDiscoveryResponseObserver();
+    StreamObserver<DiscoveryRequest> requestObserver = stub.streamAggregatedResources(responseObserver);
+
+    requestObserver.onNext(DiscoveryRequest.newBuilder()
+        .setNode(NODE)
+        .setTypeUrl(Resources.V3.LISTENER_TYPE_URL)
+        .build());
+
+    if (!responseObserver.errorLatch.await(1, TimeUnit.SECONDS) || responseObserver.completed.get()) {
+      fail(format("failed to error before timeout, completed = %b", responseObserver.completed.get()));
+    }
+
+    callbacks.assertThatNoErrors();
+
+    assertThat(responseObserver.errorException).isInstanceOfSatisfying(StatusRuntimeException.class, ex -> {
+      assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.INVALID_ARGUMENT);
+      assertThat(ex.getStatus().getDescription()).isEqualTo("request not valid");
+    });
+
+    assertThat(callbacks.streamCloseCount).hasValue(0);
+    assertThat(callbacks.streamCloseWithErrorCount).hasValue(1);
+    assertThat(callbacks.streamOpenCount).hasValue(1);
+    assertThat(callbacks.streamRequestCount).hasValue(0);
     assertThat(callbacks.streamResponseCount).hasValue(0);
   }
 
@@ -918,7 +967,7 @@ public class V3DiscoveryServerTest {
   public void testCallbacksOtherStatusException() throws InterruptedException {
     MockDiscoveryServerCallbacks callbacks = new MockDiscoveryServerCallbacks() {
       @Override
-      public void onV3StreamRequest(long streamId, DiscoveryRequest request) {
+      public void onV3StreamRequest(long streamId, DiscoveryRequest request) throws RequestException {
         super.onV3StreamRequest(streamId, request);
         throw new StatusRuntimeException(Status.INVALID_ARGUMENT.withDescription("request not valid"));
       }
@@ -946,7 +995,7 @@ public class V3DiscoveryServerTest {
 
     assertThat(responseObserver.errorException).isInstanceOfSatisfying(StatusRuntimeException.class, ex -> {
       assertThat(ex.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN);
-      assertThat(ex.getStatus().getDescription()).isNull();
+      assertThat(ex.getStatus().getDescription()).isEqualTo("Application error processing RPC");
     });
 
     assertThat(callbacks.streamCloseCount).hasValue(0);
@@ -983,13 +1032,14 @@ public class V3DiscoveryServerTest {
     public Watch createWatch(
         boolean ads,
         XdsRequest request,
-        Set<String> knownResources,
+        Set<String> knownResourceNames,
         Consumer<Response> responseConsumer,
-        boolean hasClusterChanged) {
+        boolean hasClusterChanged,
+        boolean allowDefaultEmptyEdsUpdate) {
 
       counts.put(request.getTypeUrl(), counts.getOrDefault(request.getTypeUrl(), 0) + 1);
 
-      Watch watch = new Watch(ads, request, responseConsumer);
+      Watch watch = new Watch(ads, allowDefaultEmptyEdsUpdate, request, responseConsumer);
 
       if (responses.row(request.getTypeUrl()).size() > 0) {
         final Response response;
@@ -1015,12 +1065,22 @@ public class V3DiscoveryServerTest {
         watch.cancel();
       } else {
         Set<String> expectedKnown = expectedKnownResources.get(request.getTypeUrl());
-        if (expectedKnown != null && !expectedKnown.equals(knownResources)) {
+        if (expectedKnown != null && !expectedKnown.equals(knownResourceNames)) {
           fail("unexpected known resources after sending all responses");
         }
       }
 
       return watch;
+    }
+
+    @Override
+    public DeltaWatch createDeltaWatch(DeltaXdsRequest request, String requesterVersion,
+                                       Map<String, String> resourceVersions,
+                                       Set<String> pendingResources,
+                                       boolean isWildcard,
+                                       Consumer<DeltaResponse> responseConsumer,
+                                       boolean hasClusterChanged) {
+      throw new IllegalStateException("not implemented");
     }
   }
 
@@ -1046,18 +1106,12 @@ public class V3DiscoveryServerTest {
     }
 
     @Override
-    public void onStreamOpen(long streamId, String typeUrl) {
+    public void onStreamOpen(long streamId, String typeUrl) throws RequestException {
       streamOpenCount.getAndIncrement();
     }
 
     @Override
-    public void onV2StreamRequest(long streamId,
-        io.envoyproxy.envoy.api.v2.DiscoveryRequest request) {
-      throw new IllegalStateException("Unexpected v2 request in v3 test");
-    }
-
-    @Override
-    public void onV3StreamRequest(long streamId, DiscoveryRequest request) {
+    public void onV3StreamRequest(long streamId, DiscoveryRequest request) throws RequestException {
       streamRequestCount.getAndIncrement();
 
       if (request == null) {
@@ -1071,9 +1125,9 @@ public class V3DiscoveryServerTest {
     }
 
     @Override
-    public void onStreamResponse(long streamId, io.envoyproxy.envoy.api.v2.DiscoveryRequest request,
-        io.envoyproxy.envoy.api.v2.DiscoveryResponse response) {
-      throw new IllegalStateException("Unexpected v2 response in v3 test");
+    public void onV3StreamDeltaRequest(long streamId,
+                                       DeltaDiscoveryRequest request) throws RequestException {
+      throw new IllegalStateException("Unexpected delta request");
     }
 
     @Override
